@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.certificateArn | quote }}
+    {{- $c := .Values.cognito }}
+    {{- if eq $c.mode "cognito" }}
+    alb.ingress.kubernetes.io/auth-type: cognito
+    alb.ingress.kubernetes.io/auth-idp-cognito: {{ dict "userPoolARN" $c.userPoolArn "userPoolClientID" $c.clientId "userPoolDomain" $c.domain | toJson | quote }}
+    {{- else if eq $c.mode "oidc" }}
+    {{- $region := index (splitList ":" $c.userPoolArn) 3 }}
+    {{- $poolId := last (splitList "/" $c.userPoolArn) }}
+    {{- $authHost := ternary $c.domain (printf "%s.auth.%s.amazoncognito.com" $c.domain $region) (contains "." $c.domain) }}
+    alb.ingress.kubernetes.io/auth-type: oidc
+    alb.ingress.kubernetes.io/auth-idp-oidc: {{ dict
+        "issuer" (printf "https://cognito-idp.%s.amazonaws.com/%s" $region $poolId)
+        "authorizationEndpoint" (printf "https://%s/oauth2/authorize" $authHost)
+        "tokenEndpoint" (printf "https://%s/oauth2/token" $authHost)
+        "userInfoEndpoint" (printf "https://%s/oauth2/userInfo" $authHost)
+        "secretName" ($c.existingSecret | default (printf "%s-oidc" .Release.Name))
+        | toJson | quote }}
+    {{- else }}
+    {{- fail "cognito.mode must be \"oidc\" or \"cognito\"" }}
+    {{- end }}
+    alb.ingress.kubernetes.io/auth-on-unauthenticated-request: authenticate
+    alb.ingress.kubernetes.io/auth-scope: openid
+    alb.ingress.kubernetes.io/auth-session-timeout: '3600'
+spec:
+  ingressClassName: alb
+  rules:
+    - host: {{ .Values.ingress.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

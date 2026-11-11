@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default .Release.Name }}
+      {{- end }}
+      {{- $pullSecret := .Values.imageCredentials.existingSecret }}
+      {{- if and (not $pullSecret) .Values.imageCredentials.username .Values.imageCredentials.password }}
+      {{- $pullSecret = printf "%s-image-pull" .Release.Name }}
+      {{- end }}
+      {{- if $pullSecret }}
+      imagePullSecrets:
+        - name: {{ $pullSecret }}
+      {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- if .Values.persistence.enabled }}
+        # Make the volume writable by the ubuntu user (UID/GID 1000).
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- end }}
+        seccompProfile:
+          type: RuntimeDefault
+
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" .Release.Name) }}
+
+      # A new, empty volume hides the image's dotfiles (.bashrc, .profile).
+      # Seed them from /etc/skel once, without overwriting existing files.
+      initContainers:
+        - name: seed-home
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c", "cp -rn /etc/skel/. /data/ 2>/dev/null || true"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- end }}
+
+      containers:
+        - name: ubuntu
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          ports:
+            - name: web
+              containerPort: 7681
+
+          {{- $credSecret := .Values.aws.credentials.existingSecret }}
+          {{- if and (not $credSecret) .Values.aws.credentials.accessKeyId .Values.aws.credentials.secretAccessKey }}
+          {{- $credSecret = printf "%s-aws-credentials" .Release.Name }}
+          {{- end }}
+          {{- if or .Values.aws.region $credSecret }}
+          {{- if .Values.aws.region }}
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.aws.region | quote }}
+          {{- end }}
+          {{- if $credSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ $credSecret }}
+          {{- end }}
+          {{- end }}
+
+          securityContext:
+            allowPrivilegeEscalation: true
+
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          readinessProbe:
+            tcpSocket:
+              port: web
+            initialDelaySeconds: 2
+            periodSeconds: 5

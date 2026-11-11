@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ubuntu-web-terminal
+version: 0.1.0
+appVersion: "24.04"
+description: Browser-based Ubuntu 24.04 terminal for isolated demo environments

@@ -1,0 +1,79 @@
+image:
+  repository: aneesh1145/ubuntu-web-terminal
+  tag: "latest"
+  pullPolicy: Always
+# Registry credentials for pulling a private image.
+imageCredentials:
+  existingSecret: "" # name of an existing kubernetes.io/dockerconfigjson Secret
+  registry: "docker.io" # empty = Docker Hub; e.g. ghcr.io or ACCOUNT.dkr.ecr.REGION.amazonaws.com
+  username: "" # or pass these via --set (creates a Secret)
+  password: ""
+service:
+  type: LoadBalancer
+  port: 80
+  # Load balancer annotations. Empty works for KIND and most clouds; on EKS it gives a
+  # Classic ELB (not recommended for WebSockets). For an EKS NLB via the AWS Load
+  # Balancer Controller, uncomment the lines below. Without the controller, use only:
+  #   service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+  annotations: {}
+    # service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    # service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    # service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+# ServiceAccount. For IRSA (recommended on EKS) add the role annotation.
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+  # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
+# AWS access for the pod. Prefer IRSA over static keys.
+aws:
+  region: ""
+  credentials:
+    existingSecret: "" # Secret with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (/ AWS_SESSION_TOKEN)
+    accessKeyId: "" # or pass keys here via --set (creates a Secret)
+    secretAccessKey: ""
+    sessionToken: ""
+# Set ingress.enabled=true and service.type=ClusterIP to put Cognito SSO in front
+# of the terminal (otherwise the LoadBalancer Service bypasses authentication).
+ingress:
+  enabled: false
+  hostname: ubuntu1.example.com
+  certificateArn: arn:aws:acm:REGION:ACCOUNT_ID:certificate/CERT_ID
+cognito:
+  # "oidc"    - ALB authenticate-oidc against Cognito's OIDC endpoints. Works when the
+  #             user pool is in a different AWS account than the ALB. Needs a client secret.
+  # "cognito" - ALB native authenticate-cognito. User pool must be in the SAME account.
+  mode: oidc
+  userPoolArn: arn:aws:cognito-idp:REGION:ACCOUNT_ID:userpool/POOL_ID
+  clientId: YOUR_CLIENT_ID
+  # Hosted UI domain: a prefix (e.g. ubuntu-demo) or a full custom domain (auth.example.com)
+  domain: auth.example.com
+  # oidc mode only: app client secret. Use an existing Secret with keys clientID / clientSecret,
+  # or set clientSecret (via --set) to have the chart create one.
+  existingSecret: ""
+  clientSecret: ""
+  # oidc mode: grant the AWS Load Balancer Controller read access to Secrets in this
+  # namespace so it can load the client secret.
+  controllerRbac:
+    create: true
+    serviceAccountName: aws-load-balancer-controller
+    serviceAccountNamespace: kube-system
+# Persist the user's home directory across pod restarts/deletion (disabled by default).
+# Only files under mountPath survive; apt-installed packages (/usr, /etc) do not.
+persistence:
+  enabled: false
+  mountPath: /home/ubuntu
+  size: 10Gi
+  storageClass: "" # empty = cluster default (e.g. gp2/gp3 on EKS, "standard" on KIND)
+  accessMode: ReadWriteOnce
+  existingClaim: "" # use an existing PVC instead of creating <release>-data
+  keepOnUninstall: false # true = PVC survives `helm uninstall`
+# Schedule the pod on matching nodes, e.g. { workload: web-terminal }
+nodeSelector: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
